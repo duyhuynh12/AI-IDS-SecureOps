@@ -1,0 +1,52 @@
+/* frontend/css/style.css */
+
+/* Chỉnh màu chữ và nền cơ bản cho các box số liệu (KPI) */
+.stMetric {
+    background-color: #1e1e2e;
+    padding: 15px;
+    border-radius: 8px;
+    border: 1px solid #2d2d3f;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+}
+
+/* Tùy chỉnh thanh trạng thái trên cùng (Top Bar) */
+.top-bar {
+    background-color: #1e1e2e;
+    padding: 15px 25px;
+    border-radius: 8px;
+    border: 1px solid #2d2d3f;
+    margin-bottom: 25px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+}
+
+/* Các nhãn trạng thái (Badges) */
+.status-badge-green {
+    background-color: rgba(0, 255, 0, 0.15);
+    color: #00ff00;
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-size: 13px;
+    font-weight: bold;
+    letter-spacing: 1px;
+}
+
+.status-badge-red {
+    background-color: rgba(255, 0, 0, 0.15);
+    color: #ff4d4d;
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-size: 13px;
+    font-weight: bold;
+    letter-spacing: 1px;
+    animation: blink 1.5s infinite; /* Hiệu ứng chớp nháy cảnh báo */
+}
+
+/* Hiệu ứng chớp đỏ cho báo động */
+@keyframes blink {
+    0% { opacity: 1; }
+    50% { opacity: 0.5; }
+    100% { opacity: 1; }
+}
