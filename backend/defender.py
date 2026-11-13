@@ -9,9 +9,14 @@ from collections import defaultdict
 from scapy.all import sniff
 from scapy.layers.inet import IP, TCP, UDP
 from colorama import init, Fore, Style
+from win10toast import ToastNotifier
 
+# Khởi tạo màu sắc và tắt cảnh báo
 init(autoreset=True)
 warnings.filterwarnings('ignore')
+
+# Khởi tạo đối tượng thông báo Desktop
+toaster = ToastNotifier()
 
 # ==========================================
 # CẤU HÌNH ĐƯỜNG DẪN TỰ ĐỘNG
@@ -21,7 +26,7 @@ DB_PATH = os.path.join(BASE_DIR, 'ids_logs.db')
 MODEL_PATH = os.path.join(BASE_DIR, 'RF_IDS_Multi.pkl')
 
 print(Fore.CYAN + Style.BRIGHT + "=" * 65)
-print(Fore.CYAN + Style.BRIGHT + "HỆ THỐNG PHÒNG THỦ AI-IDS (CORE ENGINE)")
+print(Fore.CYAN + Style.BRIGHT + " HỆ THỐNG PHÒNG THỦ AI-IDS (CORE ENGINE)")
 print(Fore.CYAN + Style.BRIGHT + "=" * 65)
 
 # ==========================================
@@ -76,6 +81,7 @@ def process_packet(packet):
     protocol = packet[IP].proto
     length = len(packet)
 
+    # Tính toán các đặc trưng thống kê bằng Cửa sổ trượt (Sliding Window)
     flow_key = f"{src_ip}->{dst_ip}"
     flow_history[flow_key].append(length)
     if len(flow_history[flow_key]) > MAX_HISTORY:
@@ -87,6 +93,7 @@ def process_packet(packet):
     mean_len = float(np.mean(lengths))
     var_len = float(np.var(lengths)) if len(lengths) > 1 else 0.0
 
+    # Trích xuất Cờ TCP
     fin, rst, psh, ack, urg = 0, 0, 0, 0, 0
     if packet.haslayer(TCP):
         flags = packet[TCP].flags
@@ -109,9 +116,26 @@ def process_packet(packet):
                        (src_ip, dst_ip, attack_name, severity))
         conn.commit()
 
+        # In ra màn hình Terminal
         print(Fore.RED + Style.BRIGHT + f" GHI NHẬN TẤN CÔNG: {src_ip} -> {attack_name}")
 
+        # Bật cảnh báo Pop-up trên màn hình Desktop (Chỉ với mức độ HIGH)
+        if severity == "HIGH":
+            try:
+                # threaded=True để đảm bảo pop-up không làm đứng/khựng luồng bắt gói tin
+                toaster.show_toast(
+                    " CẢNH BÁO SOC - AI IDS",
+                    f"Phát hiện {attack_name} từ IP: {src_ip}",
+                    duration=3,
+                    threaded=True
+                )
+            except Exception as e:
+                pass  # Bỏ qua lỗi nếu hệ điều hành không hỗ trợ toast notification lúc đó
 
+
+# ==========================================
+# 4. KÍCH HOẠT SNIFFER
+# ==========================================
 try:
     sniff(filter="tcp or udp", prn=process_packet, store=False)
 except KeyboardInterrupt:
