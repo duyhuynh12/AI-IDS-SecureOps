@@ -1,12 +1,11 @@
 import sys
 import os
-import time
 import sqlite3
 import numpy as np
 import joblib
 import warnings
 from collections import defaultdict
-from scapy.all import sniff
+from scapy.all import sniff, get_working_ifaces, conf
 from scapy.layers.inet import IP, TCP, UDP
 from colorama import init, Fore, Style
 from win10toast import ToastNotifier
@@ -26,7 +25,7 @@ DB_PATH = os.path.join(BASE_DIR, 'ids_logs.db')
 MODEL_PATH = os.path.join(BASE_DIR, 'RF_IDS_Multi.pkl')
 
 print(Fore.CYAN + Style.BRIGHT + "=" * 65)
-print(Fore.CYAN + Style.BRIGHT + " HỆ THỐNG PHÒNG THỦ AI-IDS (CORE ENGINE)")
+print(Fore.CYAN + Style.BRIGHT + " HỆ THỐNG PHÒNG THỦ AI-IDS (CORE ENGINE) ")
 print(Fore.CYAN + Style.BRIGHT + "=" * 65)
 
 # ==========================================
@@ -59,29 +58,36 @@ except Exception as e:
     print(Fore.RED + f"[!] LỖI: Không tìm thấy file model. Vui lòng kiểm tra lại. Chi tiết: {e}")
     sys.exit(1)
 
-print(Fore.CYAN + "[*] Hệ thống IDS đang chạy. Đang rà quét card mạng...")
-
 flow_history = defaultdict(list)
 MAX_HISTORY = 10
 LABELS_MULTI = {
     0: 'SẠCH (BENIGN)', 1: 'SYN FLOOD', 2: 'UDP FLOOD',
     3: 'MSSQL AMPLIFICATION', 4: 'LDAP AMPLIFICATION'
 }
-
+packet_counter = 0
 
 # ==========================================
 # 3. HÀM BẮT GÓI TIN VÀ DỰ ĐOÁN
 # ==========================================
 def process_packet(packet):
+    global packet_counter
     if not packet.haslayer(IP):
         return
 
+    packet_counter += 1
     src_ip = packet[IP].src
     dst_ip = packet[IP].dst
     protocol = packet[IP].proto
-    length = len(packet)
 
-    # Tính toán các đặc trưng thống kê bằng Cửa sổ trượt (Sliding Window)
+    # Trích xuất độ dài Payload tầng Giao vận (khớp chuẩn CICFlowMeter / CIC-DDoS2019)
+    if packet.haslayer(TCP):
+        length = len(packet[TCP].payload)
+    elif packet.haslayer(UDP):
+        length = len(packet[UDP].payload)
+    else:
+        length = len(packet[IP].payload)
+
+    # Tính toán các đặc trưng thống kê bằng Cửa sổ trượt
     flow_key = f"{src_ip}->{dst_ip}"
     flow_history[flow_key].append(length)
     if len(flow_history[flow_key]) > MAX_HISTORY:
@@ -103,9 +109,11 @@ def process_packet(packet):
         ack = 1 if 'A' in flags else 0
         urg = 1 if 'U' in flags else 0
 
-    # Đưa vào AI dự đoán
-    features = np.array([[protocol, fin, rst, psh, ack, urg, min_len, max_len, mean_len, var_len]])
-    prediction = model.predict(features)[0]
+    # Đưa vào AI dự đoán (Đúng thứ tự 10 cột của RF_IDS_Multi.pkl:
+    # Protocol, Min Packet Length, Max Packet Length, Packet Length Mean, Packet Length Variance,
+    # FIN Flag Count, RST Flag Count, PSH Flag Count, ACK Flag Count, URG Flag Count)
+    features = np.array([[protocol, min_len, max_len, mean_len, var_len, fin, rst, psh, ack, urg]])
+    prediction = int(model.predict(features)[0])
 
     if prediction != 0:
         attack_name = LABELS_MULTI.get(prediction, "UNKNOWN")
@@ -117,27 +125,58 @@ def process_packet(packet):
         conn.commit()
 
         # In ra màn hình Terminal
-        print(Fore.RED + Style.BRIGHT + f" GHI NHẬN TẤN CÔNG: {src_ip} -> {attack_name}")
+        print(Fore.RED + Style.BRIGHT + f" GHI NHẬN TẤN CÔNG: {src_ip} -> {dst_ip} | {attack_name} [{severity}]")
 
-        # Bật cảnh báo Pop-up trên màn hình Desktop (Chỉ với mức độ HIGH)
+        # Bật cảnh báo Pop-up trên màn hình Desktop
         if severity == "HIGH":
             try:
-                # threaded=True để đảm bảo pop-up không làm đứng/khựng luồng bắt gói tin
                 toaster.show_toast(
                     " CẢNH BÁO SOC - AI IDS",
                     f"Phát hiện {attack_name} từ IP: {src_ip}",
                     duration=3,
                     threaded=True
                 )
-            except Exception as e:
-                pass  # Bỏ qua lỗi nếu hệ điều hành không hỗ trợ toast notification lúc đó
+            except Exception:
+                pass
+    else:
+        if packet_counter % 50 == 0:
+            print(Fore.GREEN + f"[✓] Đã kiểm tra {packet_counter} gói tin (Trạng thái: SẠCH)...")
 
 
 # ==========================================
-# 4. KÍCH HOẠT SNIFFER
+# 4. CHỌN CARD MẠNG VÀ KÍCH HOẠT SNIFFER
 # ==========================================
+def select_interfaces():
+    ifaces = get_working_ifaces()
+    if not ifaces:
+        return None
+
+    print(Fore.YELLOW + "DANH SÁCH CARD MẠNG (NPCAP INTERFACES):")
+    print(f"  [0] Tất cả các card mạng khả dụng ({len(ifaces)} card) - Khuyên dùng")
+    for idx, iface in enumerate(ifaces, start=1):
+        ip_addr = getattr(iface, 'ip', '') or 'N/A'
+        print(f"  [{idx}] {iface.description} (IP: {ip_addr})")
+
+    if len(ifaces) == 1 and "Loopback" in ifaces[0].description:
+        print(Fore.RED + "\n[!] CẢNH BÁO: Npcap hiện chỉ nhìn thấy Card Loopback (127.0.0.1)!")
+        print(Fore.YELLOW + "    Nếu muốn bắt gói tin từ máy khác trong mạng LAN/Wi-Fi, hãy mở CMD/PowerShell")
+        print(Fore.YELLOW + "    với quyền Administrator và chạy: & \"C:\\Program Files\\Npcap\\NPFInstall.exe\" -r2\n")
+
+    choice = input(Fore.CYAN + f"[?] Chọn card mạng cần giám sát (0-{len(ifaces)}, Mặc định = 0): ").strip()
+    if choice.isdigit():
+        idx = int(choice)
+        if 1 <= idx <= len(ifaces):
+            return ifaces[idx - 1]
+    return ifaces if len(ifaces) > 1 else ifaces[0]
+
+
 try:
-    sniff(filter="tcp or udp", prn=process_packet, store=False)
+    selected_iface = select_interfaces()
+    print(Fore.CYAN + "\n[*] Hệ thống IDS đang chạy và lắng nghe gói tin TCP/UDP...")
+    if selected_iface:
+        sniff(iface=selected_iface, filter="tcp or udp", prn=process_packet, store=False)
+    else:
+        sniff(filter="tcp or udp", prn=process_packet, store=False)
 except KeyboardInterrupt:
     conn.close()
     print(Fore.YELLOW + "\n[*] Đã đóng Database và dừng hệ thống IDS.")

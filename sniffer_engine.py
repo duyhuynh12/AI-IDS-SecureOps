@@ -6,7 +6,7 @@ import numpy as np
 import joblib
 import warnings
 from collections import defaultdict
-from scapy.all import sniff
+from scapy.all import sniff, get_working_ifaces
 from scapy.layers.inet import IP, TCP, UDP
 from colorama import init, Fore, Style
 
@@ -17,8 +17,8 @@ warnings.filterwarnings('ignore')
 # CẤU HÌNH ĐƯỜNG DẪN TỰ ĐỘNG
 # ==========================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, 'ids_logs.db')
-MODEL_PATH = os.path.join(BASE_DIR, 'RF_IDS_Multi.pkl')
+DB_PATH = os.path.join(BASE_DIR, 'backend', 'ids_logs.db') if os.path.exists(os.path.join(BASE_DIR, 'backend')) else os.path.join(BASE_DIR, 'ids_logs.db')
+MODEL_PATH = os.path.join(BASE_DIR, 'backend', 'RF_IDS_Multi.pkl') if os.path.exists(os.path.join(BASE_DIR, 'backend', 'RF_IDS_Multi.pkl')) else os.path.join(BASE_DIR, 'RF_IDS_Multi.pkl')
 
 print(Fore.CYAN + Style.BRIGHT + "=" * 65)
 print(Fore.CYAN + Style.BRIGHT + "🛡️ HỆ THỐNG PHÒNG THỦ AI-IDS (CORE ENGINE) 🛡️")
@@ -74,7 +74,13 @@ def process_packet(packet):
     src_ip = packet[IP].src
     dst_ip = packet[IP].dst
     protocol = packet[IP].proto
-    length = len(packet)
+
+    if packet.haslayer(TCP):
+        length = len(packet[TCP].payload)
+    elif packet.haslayer(UDP):
+        length = len(packet[UDP].payload)
+    else:
+        length = len(packet[IP].payload)
 
     flow_key = f"{src_ip}->{dst_ip}"
     flow_history[flow_key].append(length)
@@ -96,9 +102,9 @@ def process_packet(packet):
         ack = 1 if 'A' in flags else 0
         urg = 1 if 'U' in flags else 0
 
-    # Đưa vào AI dự đoán
-    features = np.array([[protocol, fin, rst, psh, ack, urg, min_len, max_len, mean_len, var_len]])
-    prediction = model.predict(features)[0]
+    # Đưa vào AI dự đoán (Đúng thứ tự 10 đặc trưng của mô hình RF_IDS_Multi.pkl)
+    features = np.array([[protocol, min_len, max_len, mean_len, var_len, fin, rst, psh, ack, urg]])
+    prediction = int(model.predict(features)[0])
 
     if prediction != 0:
         attack_name = LABELS_MULTI.get(prediction, "UNKNOWN")
@@ -109,11 +115,12 @@ def process_packet(packet):
                        (src_ip, dst_ip, attack_name, severity))
         conn.commit()
 
-        print(Fore.RED + Style.BRIGHT + f"🚨 GHI NHẬN TẤN CÔNG: {src_ip} -> {attack_name}")
+        print(Fore.RED + Style.BRIGHT + f"🚨 GHI NHẬN TẤN CÔNG: {src_ip} -> {dst_ip} | {attack_name}")
 
 
 try:
-    sniff(filter="tcp or udp", prn=process_packet, store=False)
+    ifaces = get_working_ifaces()
+    sniff(iface=ifaces if len(ifaces) > 1 else None, filter="tcp or udp", prn=process_packet, store=False)
 except KeyboardInterrupt:
     conn.close()
     print(Fore.YELLOW + "\n[*] Đã đóng Database và dừng hệ thống IDS.")

