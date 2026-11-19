@@ -5,6 +5,7 @@ import sqlite3
 import numpy as np
 import joblib
 import warnings
+from functools import lru_cache
 from collections import defaultdict
 from scapy.all import sniff, get_working_ifaces
 from scapy.layers.inet import IP, TCP, UDP
@@ -54,10 +55,18 @@ print(Fore.GREEN + f"[+] Database '{DB_PATH}' đã sẵn sàng (WAL Mode | Giớ
 try:
     print(f"[*] Đang tải mô hình từ: {MODEL_PATH}")
     model = joblib.load(MODEL_PATH)
+    model.n_jobs = 1
     print(Fore.GREEN + "[+] Tải bộ não AI thành công!\n")
 except Exception as e:
     print(Fore.RED + f"[!] LỖI: Không tìm thấy file model. Vui lòng kiểm tra lại. Chi tiết: {e}")
     sys.exit(1)
+
+
+@lru_cache(maxsize=4096)
+def predict_cached(protocol, min_len, max_len, mean_len, var_len, fin, rst, psh, ack, urg):
+    features = np.array([[protocol, min_len, max_len, mean_len, var_len, fin, rst, psh, ack, urg]])
+    return int(model.predict(features)[0])
+
 
 print(Fore.CYAN + "[*] Hệ thống IDS đang chạy. Đang rà quét card mạng...")
 
@@ -101,8 +110,8 @@ def process_packet(packet):
         lengths = flow_history[flow_key]
         min_len = min(lengths)
         max_len = max(lengths)
-        mean_len = float(np.mean(lengths))
-        var_len = float(np.var(lengths)) if len(lengths) > 1 else 0.0
+        mean_len = round(float(np.mean(lengths)), 2)
+        var_len = round(float(np.var(lengths)), 2) if len(lengths) > 1 else 0.0
 
         fin, rst, psh, ack, urg = 0, 0, 0, 0, 0
         if packet.haslayer(TCP):
@@ -113,9 +122,7 @@ def process_packet(packet):
             ack = 1 if 'A' in flags else 0
             urg = 1 if 'U' in flags else 0
 
-        # Đưa vào AI dự đoán (Đúng thứ tự 10 đặc trưng của mô hình RF_IDS_Multi.pkl)
-        features = np.array([[protocol, min_len, max_len, mean_len, var_len, fin, rst, psh, ack, urg]])
-        prediction = int(model.predict(features)[0])
+        prediction = predict_cached(protocol, min_len, max_len, mean_len, var_len, fin, rst, psh, ack, urg)
 
         if prediction != 0:
             attack_counter += 1
@@ -141,7 +148,8 @@ def process_packet(packet):
 
 try:
     ifaces = get_working_ifaces()
-    sniff(iface=ifaces if len(ifaces) > 1 else None, filter="tcp or udp", prn=process_packet, store=False)
+    BPF_FILTER = "(tcp or udp) and not port 8501"
+    sniff(iface=ifaces if len(ifaces) > 1 else None, filter=BPF_FILTER, prn=process_packet, store=False)
 except KeyboardInterrupt:
     conn.close()
     print(Fore.YELLOW + "\n[*] Đã đóng Database và dừng hệ thống IDS.")

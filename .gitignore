@@ -1,0 +1,18 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# SQLite database & WAL temporary files
+*.db
+*.db-wal
+*.db-shm
+
+# IDE settings
+.idea/
+.vscode/
