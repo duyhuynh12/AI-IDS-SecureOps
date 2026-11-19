@@ -104,7 +104,7 @@ with st.sidebar:
     menu_selection = option_menu(
         menu_title="DANH MỤC",
         options=["Bảng Điều Khiển", "Cảnh Báo"],
-        icons=["speedometer2", "exclamation-triangle", "search", "graph-up-arrow", "file-earmark-text"],
+        icons=["speedometer2", "exclamation-triangle"],
         menu_icon="cast",
         default_index=0,
         styles=MENU_STYLES
@@ -120,8 +120,6 @@ with st.sidebar:
         else:
             st.error("Không thể xóa Database lúc này.")
 
-
-placeholder = st.empty()
 
 # ==========================================
 # 4. ĐỊNH TUYẾN & RENDER GIAO DIỆN (ROUTING)
@@ -160,14 +158,14 @@ if menu_selection == "Bảng Điều Khiển":
 
             c_chart1, c_chart2 = st.columns([2, 1])
             with c_chart1:
-                st.markdown("####  Biểu Đồ Xu Hướng Tấn Công")
+                st.markdown("####  Biểu Đồ Xu Hướng Tấn Công (Chu kỳ 10 giây)")
                 if df.empty:
                     fig_line = go.Figure().update_layout(template="plotly_dark", height=300,
                                                          margin=dict(l=0, r=0, t=10, b=0))
                     st.plotly_chart(fig_line, use_container_width=True, key=f"line_e_{loop_id}")
                 else:
-                    df_time = df.set_index('timestamp').resample('1Min').size().reset_index(name='count')
-                    fig_line = px.line(df_time, x='timestamp', y='count', template="plotly_dark")
+                    df_time = df.set_index('timestamp').resample('10s').size().reset_index(name='count')
+                    fig_line = px.line(df_time, x='timestamp', y='count', markers=True, template="plotly_dark")
                     fig_line.update_traces(line_color='#ff4b4b', line_width=3)
                     fig_line.update_layout(height=300, margin=dict(l=0, r=0, t=10, b=0), xaxis_title="", yaxis_title="")
                     st.plotly_chart(fig_line, use_container_width=True, key=f"line_{loop_id}")
@@ -237,6 +235,3 @@ elif menu_selection == "Cảnh Báo":
         except AttributeError:
             st.dataframe(filtered_df.style.applymap(highlight_row, subset=['Mức Độ']), use_container_width=True,
                          height=500)
-
-elif menu_selection in ["Điều Tra", "Xu Hướng", "Báo Cáo"]:
-    st.info(f"Tính năng **{menu_selection}** đang được phát triển trong phiên bản tiếp theo.")

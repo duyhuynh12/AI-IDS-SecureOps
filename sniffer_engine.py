@@ -20,6 +20,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, 'backend', 'ids_logs.db') if os.path.exists(os.path.join(BASE_DIR, 'backend')) else os.path.join(BASE_DIR, 'ids_logs.db')
 MODEL_PATH = os.path.join(BASE_DIR, 'backend', 'RF_IDS_Multi.pkl') if os.path.exists(os.path.join(BASE_DIR, 'backend', 'RF_IDS_Multi.pkl')) else os.path.join(BASE_DIR, 'RF_IDS_Multi.pkl')
 MAX_DB_RECORDS = 20000
+MAX_FLOWS = 5000
 
 print(Fore.CYAN + Style.BRIGHT + "=" * 65)
 print(Fore.CYAN + Style.BRIGHT + "🛡️ HỆ THỐNG PHÒNG THỦ AI-IDS (CORE ENGINE) 🛡️")
@@ -36,7 +37,7 @@ cursor.execute("PRAGMA synchronous=NORMAL;")
 cursor.execute('''
     CREATE TABLE IF NOT EXISTS attack_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+        timestamp DATETIME DEFAULT (datetime('now', 'localtime')),
         src_ip TEXT,
         dst_ip TEXT,
         attack_type TEXT,
@@ -74,60 +75,68 @@ attack_counter = 0
 # ==========================================
 def process_packet(packet):
     global attack_counter
-    if not packet.haslayer(IP):
-        return
+    try:
+        if not packet.haslayer(IP):
+            return
 
-    src_ip = packet[IP].src
-    dst_ip = packet[IP].dst
-    protocol = packet[IP].proto
+        src_ip = packet[IP].src
+        dst_ip = packet[IP].dst
+        protocol = packet[IP].proto
 
-    if packet.haslayer(TCP):
-        length = len(packet[TCP].payload)
-    elif packet.haslayer(UDP):
-        length = len(packet[UDP].payload)
-    else:
-        length = len(packet[IP].payload)
+        if packet.haslayer(TCP):
+            length = len(packet[TCP].payload)
+        elif packet.haslayer(UDP):
+            length = len(packet[UDP].payload)
+        else:
+            length = len(packet[IP].payload)
 
-    flow_key = f"{src_ip}->{dst_ip}"
-    flow_history[flow_key].append(length)
-    if len(flow_history[flow_key]) > MAX_HISTORY:
-        flow_history[flow_key].pop(0)
+        if len(flow_history) > MAX_FLOWS:
+            flow_history.clear()
 
-    lengths = flow_history[flow_key]
-    min_len = min(lengths)
-    max_len = max(lengths)
-    mean_len = float(np.mean(lengths))
-    var_len = float(np.var(lengths)) if len(lengths) > 1 else 0.0
+        flow_key = f"{src_ip}->{dst_ip}"
+        flow_history[flow_key].append(length)
+        if len(flow_history[flow_key]) > MAX_HISTORY:
+            flow_history[flow_key].pop(0)
 
-    fin, rst, psh, ack, urg = 0, 0, 0, 0, 0
-    if packet.haslayer(TCP):
-        flags = packet[TCP].flags
-        fin = 1 if 'F' in flags else 0
-        rst = 1 if 'R' in flags else 0
-        psh = 1 if 'P' in flags else 0
-        ack = 1 if 'A' in flags else 0
-        urg = 1 if 'U' in flags else 0
+        lengths = flow_history[flow_key]
+        min_len = min(lengths)
+        max_len = max(lengths)
+        mean_len = float(np.mean(lengths))
+        var_len = float(np.var(lengths)) if len(lengths) > 1 else 0.0
 
-    # Đưa vào AI dự đoán (Đúng thứ tự 10 đặc trưng của mô hình RF_IDS_Multi.pkl)
-    features = np.array([[protocol, min_len, max_len, mean_len, var_len, fin, rst, psh, ack, urg]])
-    prediction = int(model.predict(features)[0])
+        fin, rst, psh, ack, urg = 0, 0, 0, 0, 0
+        if packet.haslayer(TCP):
+            flags = packet[TCP].flags
+            fin = 1 if 'F' in flags else 0
+            rst = 1 if 'R' in flags else 0
+            psh = 1 if 'P' in flags else 0
+            ack = 1 if 'A' in flags else 0
+            urg = 1 if 'U' in flags else 0
 
-    if prediction != 0:
-        attack_counter += 1
-        attack_name = LABELS_MULTI.get(prediction, "UNKNOWN")
-        severity = "HIGH" if prediction in [3, 4] else "MEDIUM"
+        # Đưa vào AI dự đoán (Đúng thứ tự 10 đặc trưng của mô hình RF_IDS_Multi.pkl)
+        features = np.array([[protocol, min_len, max_len, mean_len, var_len, fin, rst, psh, ack, urg]])
+        prediction = int(model.predict(features)[0])
 
-        # Ghi log tấn công vào Database
-        cursor.execute("INSERT INTO attack_logs (src_ip, dst_ip, attack_type, severity) VALUES (?, ?, ?, ?)",
-                       (src_ip, dst_ip, attack_name, severity))
-        if attack_counter % 200 == 0:
+        if prediction != 0:
+            attack_counter += 1
+            attack_name = LABELS_MULTI.get(prediction, "UNKNOWN")
+            severity = "HIGH" if prediction in [3, 4] else "MEDIUM"
+
             cursor.execute(
-                "DELETE FROM attack_logs WHERE id <= (SELECT MAX(id) - ? FROM attack_logs)",
-                (MAX_DB_RECORDS,)
+                "INSERT INTO attack_logs (timestamp, src_ip, dst_ip, attack_type, severity) "
+                "VALUES (datetime('now', 'localtime'), ?, ?, ?, ?)",
+                (src_ip, dst_ip, attack_name, severity)
             )
-        conn.commit()
+            if attack_counter % 200 == 0:
+                cursor.execute(
+                    "DELETE FROM attack_logs WHERE id <= (SELECT MAX(id) - ? FROM attack_logs)",
+                    (MAX_DB_RECORDS,)
+                )
+            conn.commit()
 
-        print(Fore.RED + Style.BRIGHT + f"🚨 GHI NHẬN TẤN CÔNG: {src_ip} -> {dst_ip} | {attack_name}")
+            print(Fore.RED + Style.BRIGHT + f"🚨 GHI NHẬN TẤN CÔNG: {src_ip} -> {dst_ip} | {attack_name}")
+    except Exception:
+        pass
 
 
 try:
