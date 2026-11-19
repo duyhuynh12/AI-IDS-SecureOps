@@ -117,9 +117,9 @@ with st.sidebar:
     )
     st.markdown("---")
     st.caption("🟢 Trạng thái: Lắng nghe Real-time")
-    st.caption(f"🔄 Tự động xoay vòng: Tối đa {MAX_DB_RECORDS:,} dòng")
+    st.caption(f" Tự động xoay vòng: Tối đa {MAX_DB_RECORDS:,} dòng")
 
-    if st.button("🗑️ Xóa toàn bộ Log (Reset DB)", use_container_width=True):
+    if st.button(" Xóa toàn bộ Log (Reset DB)", use_container_width=True):
         if clear_all_logs():
             st.toast("Đã xóa toàn bộ dữ liệu log tấn công!", icon="✅")
             st.rerun()
@@ -149,7 +149,7 @@ if menu_selection == "Bảng Điều Khiển":
                 <div class="top-bar">
                     <div> <b>Tình trạng hệ thống:</b> <span class="status-badge-green">HOẠT ĐỘNG TỐT</span> &nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp; 
                      <b>Mức độ đe dọa:</b> {threat_html}</div>
-                    <div>📦 DB: {db_size_kb:,.1f} KB ({total_alerts:,}/{MAX_DB_RECORDS:,} dòng) &nbsp;&nbsp;|&nbsp;&nbsp; 👤 Quản trị viên SOC</div>
+                    <div> DB: {db_size_kb:,.1f} KB ({total_alerts:,}/{MAX_DB_RECORDS:,} dòng) &nbsp;&nbsp;|&nbsp;&nbsp; 👤 Quản trị viên SOC</div>
                 </div>
             """, unsafe_allow_html=True)
 
@@ -196,7 +196,7 @@ elif menu_selection == "Cảnh Báo":
     # ------------------------------------------------
     # TRANG 2: BỘ LỌC CẢNH BÁO (Smart Filters)
     # ------------------------------------------------
-    st.markdown("### 🚨 Trung Tâm Quản Lý Cảnh Báo (Alerts Center)")
+    st.markdown("### Trung Tâm Quản Lý Cảnh Báo (Alerts Center)")
     st.markdown(f"Sử dụng bộ lọc để truy vết các sự cố mạng (Hiển thị tối đa {MAX_DISPLAY_ROWS:,} bản ghi mới nhất).")
 
     df = load_data(limit=MAX_DISPLAY_ROWS)
@@ -213,7 +213,7 @@ elif menu_selection == "Cảnh Báo":
             ip_list = ["Tất cả"] + list(df['src_ip'].unique())
             ip_filter = st.selectbox("Truy vết IP Nguồn:", ip_list)
         with col_filter3:
-            if st.button("🔄 Làm mới dữ liệu", use_container_width=True):
+            if st.button(" Làm mới dữ liệu", use_container_width=True):
                 st.rerun()
 
         filtered_df = df[df['severity'].isin(sev_filter)]
@@ -237,7 +237,7 @@ elif menu_selection == "Điều Tra":
     # ------------------------------------------------
     # TRANG 3: ĐIỀU TRA & TRUY VẾT KẺ TẤN CÔNG (THREAT HUNTING)
     # ------------------------------------------------
-    st.markdown("### 🔍 Trung Tâm Điều Tra & Truy Vết IP (Threat Hunting)")
+    st.markdown("###  Trung Tâm Điều Tra & Truy Vết IP (Threat Hunting)")
     st.markdown("Phân tích hành vi, xếp hạng các nguồn phát tán DDoS và lập hồ sơ chi tiết từng IP tấn công.")
 
     df = load_data(limit=MAX_DB_RECORDS)
@@ -251,7 +251,7 @@ elif menu_selection == "Điều Tra":
         col_hunt1, col_hunt2 = st.columns([1, 1])
 
         with col_hunt1:
-            st.markdown("#### 🏆 Top 10 IP Tấn Công Mạnh Nhất")
+            st.markdown("####  Top 10 IP Tấn Công Mạnh Nhất")
             top_ips = (
                 df.groupby('src_ip')
                 .size()
@@ -279,7 +279,7 @@ elif menu_selection == "Điều Tra":
             st.plotly_chart(fig_top, use_container_width=True)
 
         with col_hunt2:
-            st.markdown("#### ⚔️ Phân Bố Vũ Khí Theo Mức Độ Đe Dọa")
+            st.markdown("####  Phân Bố Loại Tấn Công Theo Mức Độ Đe Dọa")
             weapon_stats = (
                 df.groupby(['attack_type', 'severity_vi'])
                 .size()
@@ -298,18 +298,18 @@ elif menu_selection == "Điều Tra":
             fig_weapon.update_layout(
                 height=340,
                 margin=dict(l=0, r=0, t=10, b=0),
-                xaxis_title="Loại Vũ Khí",
+                xaxis_title="Loại Tấn Công",
                 yaxis_title="Số lượng gói",
                 legend_title="Mức độ"
             )
             st.plotly_chart(fig_weapon, use_container_width=True)
 
         st.markdown("---")
-        st.markdown("#### 🕵️ Hồ Sơ Truy Vết Chi Tiết Từng IP (IP Forensics Profile)")
+        st.markdown("####  Hồ Sơ Truy Vết Chi Tiết Từng IP (IP Forensics Profile)")
 
         ip_ranking = df['src_ip'].value_counts().index.tolist()
         selected_ip = st.selectbox(
-            "🎯 Chọn IP Kẻ Tấn Công cần điều tra chuyên sâu (Sắp xếp theo mức độ nguy hiểm):",
+            " Chọn IP Kẻ Tấn Công cần điều tra chuyên sâu (Sắp xếp theo mức độ nguy hiểm):",
             ip_ranking
         )
 
@@ -324,10 +324,10 @@ elif menu_selection == "Điều Tra":
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Tổng Gói Tấn Công", f"{ip_total:,} gói", f"Chiếm {(ip_total / len(df) * 100):.1f}% tổng log")
         m2.metric("Mức Đe Dọa Của IP", ip_threat_badge, f"{ip_high:,} gói khuếch đại")
-        m3.metric("Vũ Khí Chủ Lực", ip_top_weapon, f"{ip_df['attack_type'].nunique()} loại vũ khí đã dùng")
+        m3.metric("Tấn Công Chủ Lực", ip_top_weapon, f"{ip_df['attack_type'].nunique()} loại vũ khí đã dùng")
         m4.metric("Hoạt Động Gần Nhất", ip_last_seen.split(' - ')[0], f"Từ {ip_first_seen.split(' - ')[0]}")
 
-        st.markdown(f"**📋 Nhật ký gói tin tấn công từ IP `{selected_ip}`:**")
+        st.markdown(f"** Nhật ký gói tin tấn công từ IP `{selected_ip}`:**")
         ip_display = ip_df[['id', 'timestamp', 'src_ip', 'dst_ip', 'attack_type', 'severity_vi']].rename(
             columns={'id': 'ID', 'timestamp': 'Thời gian', 'src_ip': 'IP Kẻ Tấn Công',
                      'dst_ip': 'IP Mục Tiêu', 'attack_type': 'Loại Tấn Công', 'severity_vi': 'Mức Độ'}
@@ -341,7 +341,7 @@ elif menu_selection == "Báo Cáo":
     # ------------------------------------------------
     # TRANG 4: BÁO CÁO & XUẤT DỮ LIỆU SOC (INCIDENT REPORTING)
     # ------------------------------------------------
-    st.markdown("### 📄 Trung Tâm Báo Cáo & Xuất Dữ Liệu SOC (SOC Reporting)")
+    st.markdown("###  Trung Tâm Báo Cáo & Xuất Dữ Liệu SOC (SOC Reporting)")
     st.markdown("Tổng hợp số liệu thống kê sự cố an ninh mạng và trích xuất báo cáo (CSV / JSON / Markdown).")
 
     df = load_data(limit=MAX_DB_RECORDS)
@@ -361,7 +361,7 @@ elif menu_selection == "Báo Cáo":
 
         report_df = df[df['attack_type'].isin(selected_attacks) & df['severity_vi'].isin(selected_sevs)].copy()
 
-        st.markdown("#### 📊 Bảng Tổng Hợp Thống Kê Theo Loại Tấn Công")
+        st.markdown("####  Bảng Tổng Hợp Thống Kê Theo Loại Tấn Công")
         if report_df.empty:
             st.warning("Không có bản ghi nào khớp với điều kiện lọc hiện tại.")
         else:
@@ -392,7 +392,7 @@ elif menu_selection == "Báo Cáo":
             st.dataframe(summary_df, use_container_width=True, hide_index=True)
 
             st.markdown("<br>", unsafe_allow_html=True)
-            st.markdown("#### 📥 Trích Xuất Hồ Sơ Sự Cố (Export Files)")
+            st.markdown("####  Trích Xuất Hồ Sơ Sự Cố (Export Files)")
 
             export_df = report_df[['id', 'timestamp', 'src_ip', 'dst_ip', 'attack_type', 'severity_vi']].rename(
                 columns={
@@ -410,7 +410,7 @@ elif menu_selection == "Báo Cáo":
             json_bytes = export_df.to_json(orient='records', force_ascii=False, date_format='iso', indent=2).encode('utf-8')
 
             # Tạo nội dung báo cáo Markdown tóm tắt cho đồ án
-            md_report = f"""# 🛡️ BÁO CÁO SỰ CỐ AN NINH MẠNG (AI-IDS SOC REPORT)
+            md_report = f"""#  BÁO CÁO SỰ CỐ AN NINH MẠNG (AI-IDS SOC REPORT)
 - **Thời gian trích xuất:** {datetime.now().strftime('%H:%M:%S - %d/%m/%Y')}
 - **Tổng số cảnh báo ghi nhận:** {len(report_df):,} gói tin
 - **Số cảnh báo mức độ CAO (Khuếch đại):** {len(report_df[report_df['severity'] == 'HIGH']):,} gói tin
