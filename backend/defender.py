@@ -18,22 +18,26 @@ warnings.filterwarnings('ignore')
 toaster = ToastNotifier()
 
 # ==========================================
-# CẤU HÌNH ĐƯỜNG DẪN TỰ ĐỘNG
+# CẤU HÌNH ĐƯỜNG DẪN TỰ ĐỘNG & GIỚI HẠN DB
 # ==========================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, 'ids_logs.db')
 MODEL_PATH = os.path.join(BASE_DIR, 'RF_IDS_Multi.pkl')
+MAX_DB_RECORDS = 20000  # Giới hạn tối đa 20.000 bản ghi mới nhất (Tự động xoay vòng chống tràn DB)
 
 print(Fore.CYAN + Style.BRIGHT + "=" * 65)
-print(Fore.CYAN + Style.BRIGHT + " HỆ THỐNG PHÒNG THỦ AI-IDS (CORE ENGINE) ")
+print(Fore.CYAN + Style.BRIGHT + "🛡️ HỆ THỐNG PHÒNG THỦ AI-IDS (CORE ENGINE) 🛡️")
 print(Fore.CYAN + Style.BRIGHT + "=" * 65)
 
 # ==========================================
-# 1. KHỞI TẠO DATABASE (SQLITE3)
+# 1. KHỞI TẠO DATABASE (SQLITE3 - WAL MODE)
 # ==========================================
 print("[*] Đang kết nối Cơ sở dữ liệu SQLite...")
-conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=10)
 cursor = conn.cursor()
+# Bật chế độ WAL giúp đọc/ghi đồng thời tốc độ cao, không bị lỗi "database is locked"
+cursor.execute("PRAGMA journal_mode=WAL;")
+cursor.execute("PRAGMA synchronous=NORMAL;")
 cursor.execute('''
     CREATE TABLE IF NOT EXISTS attack_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,8 +48,9 @@ cursor.execute('''
         severity TEXT
     )
 ''')
+cursor.execute("CREATE INDEX IF NOT EXISTS idx_attack_logs_timestamp ON attack_logs(timestamp DESC);")
 conn.commit()
-print(Fore.GREEN + f"[+] Database '{DB_PATH}' đã sẵn sàng!\n")
+print(Fore.GREEN + f"[+] Database '{DB_PATH}' đã sẵn sàng (WAL Mode | Giới hạn: {MAX_DB_RECORDS:,} dòng)!\n")
 
 # ==========================================
 # 2. TẢI MÔ HÌNH HỌC MÁY
@@ -65,12 +70,14 @@ LABELS_MULTI = {
     3: 'MSSQL AMPLIFICATION', 4: 'LDAP AMPLIFICATION'
 }
 packet_counter = 0
+attack_counter = 0
+
 
 # ==========================================
 # 3. HÀM BẮT GÓI TIN VÀ DỰ ĐOÁN
 # ==========================================
 def process_packet(packet):
-    global packet_counter
+    global packet_counter, attack_counter
     if not packet.haslayer(IP):
         return
 
@@ -116,22 +123,31 @@ def process_packet(packet):
     prediction = int(model.predict(features)[0])
 
     if prediction != 0:
+        attack_counter += 1
         attack_name = LABELS_MULTI.get(prediction, "UNKNOWN")
         severity = "HIGH" if prediction in [3, 4] else "MEDIUM"
 
         # Ghi log tấn công vào Database
         cursor.execute("INSERT INTO attack_logs (src_ip, dst_ip, attack_type, severity) VALUES (?, ?, ?, ?)",
                        (src_ip, dst_ip, attack_name, severity))
+
+        # Tự động xoay vòng (Auto-Pruning): Mỗi 200 gói tấn công sẽ kiểm tra và xóa bớt log cũ vượt ngưỡng MAX_DB_RECORDS
+        if attack_counter % 200 == 0:
+            cursor.execute(
+                "DELETE FROM attack_logs WHERE id <= (SELECT MAX(id) - ? FROM attack_logs)",
+                (MAX_DB_RECORDS,)
+            )
+
         conn.commit()
 
         # In ra màn hình Terminal
-        print(Fore.RED + Style.BRIGHT + f" GHI NHẬN TẤN CÔNG: {src_ip} -> {dst_ip} | {attack_name} [{severity}]")
+        print(Fore.RED + Style.BRIGHT + f"🚨 GHI NHẬN TẤN CÔNG: {src_ip} -> {dst_ip} | {attack_name} [{severity}]")
 
         # Bật cảnh báo Pop-up trên màn hình Desktop
         if severity == "HIGH":
             try:
                 toaster.show_toast(
-                    " CẢNH BÁO SOC - AI IDS",
+                    "🚨 CẢNH BÁO SOC - AI IDS",
                     f"Phát hiện {attack_name} từ IP: {src_ip}",
                     duration=3,
                     threaded=True

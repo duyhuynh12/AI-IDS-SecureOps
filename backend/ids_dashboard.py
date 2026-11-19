@@ -14,6 +14,8 @@ BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BACKEND_DIR)
 CSS_PATH = os.path.join(ROOT_DIR, "frontend", "CSS", "style.css")
 DB_PATH = os.path.join(BACKEND_DIR, "ids_logs.db")
+MAX_DISPLAY_ROWS = 5000  # Giới hạn số dòng nạp lên RAM mỗi chu kỳ để chống đơ trình duyệt
+MAX_DB_RECORDS = 20000
 
 # ==========================================
 # KHAI BÁO BIẾN GIAO DIỆN (UI CONFIGS)
@@ -44,14 +46,61 @@ def load_css(css_file_path):
 
 load_css(CSS_PATH)
 
+
 # ==========================================
-# 2. XÂY DỰNG SIDEBAR
+# 2. CÁC HÀM KẾT NỐI & QUẢN TRỊ DATABASE
+# ==========================================
+def load_data(limit=MAX_DISPLAY_ROWS):
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=10)
+        df = pd.read_sql_query(
+            f"SELECT * FROM attack_logs ORDER BY id DESC LIMIT {int(limit)}",
+            conn
+        )
+        conn.close()
+        if not df.empty:
+            df['timestamp'] = pd.to_datetime(df['timestamp'])
+        return df
+    except Exception:
+        return pd.DataFrame(columns=['id', 'timestamp', 'src_ip', 'dst_ip', 'attack_type', 'severity'])
+
+
+def get_db_stats():
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=10)
+        cur = conn.cursor()
+        row = cur.execute(
+            "SELECT COUNT(*), "
+            "COALESCE(SUM(CASE WHEN severity = 'HIGH' THEN 1 ELSE 0 END), 0), "
+            "COUNT(DISTINCT src_ip) "
+            "FROM attack_logs"
+        ).fetchone()
+        conn.close()
+        db_size_kb = os.path.getsize(DB_PATH) / 1024.0 if os.path.exists(DB_PATH) else 0.0
+        return int(row[0]), int(row[1]), int(row[2]), db_size_kb
+    except Exception:
+        return 0, 0, 0, 0.0
+
+
+def clear_all_logs():
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=10)
+        conn.execute("DELETE FROM attack_logs;")
+        conn.commit()
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+        conn.close()
+        return True
+    except Exception:
+        return False
+
+
+# ==========================================
+# 3. XÂY DỰNG SIDEBAR
 # ==========================================
 with st.sidebar:
     st.markdown("## 🛡️ SecureOps\n<small>v1.2.0 - Phân hệ AI IDS</small>", unsafe_allow_html=True)
     st.markdown("---")
 
-    # Đoạn code Render giờ đây đã hoàn toàn sạch sẽ, chỉ chứa tham số cốt lõi
     menu_selection = option_menu(
         menu_title="DANH MỤC",
         options=["Bảng Điều Khiển", "Cảnh Báo"],
@@ -62,21 +111,14 @@ with st.sidebar:
     )
     st.markdown("---")
     st.caption("🟢 Trạng thái: Lắng nghe Real-time")
+    st.caption(f"🔄 Tự động xoay vòng: Tối đa {MAX_DB_RECORDS:,} dòng")
 
-
-# ==========================================
-# 3. KẾT NỐI DATABASE
-# ==========================================
-def load_data():
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        df = pd.read_sql_query("SELECT * FROM attack_logs ORDER BY timestamp DESC", conn)
-        conn.close()
-        if not df.empty:
-            df['timestamp'] = pd.to_datetime(df['timestamp'])
-        return df
-    except Exception:
-        return pd.DataFrame(columns=['id', 'timestamp', 'src_ip', 'dst_ip', 'attack_type', 'severity'])
+    if st.button("🗑️ Xóa toàn bộ Log (Reset DB)", use_container_width=True):
+        if clear_all_logs():
+            st.toast("Đã xóa toàn bộ dữ liệu log tấn công!", icon="✅")
+            st.rerun()
+        else:
+            st.error("Không thể xóa Database lúc này.")
 
 
 placeholder = st.empty()
@@ -91,12 +133,9 @@ if menu_selection == "Bảng Điều Khiển":
     # ------------------------------------------------
     placeholder = st.empty()
     while True:
-        df = load_data()
+        total_alerts, critical_alerts, unique_ips, db_size_kb = get_db_stats()
+        df = load_data(limit=MAX_DISPLAY_ROWS)
         loop_id = str(time.time())
-
-        total_alerts = len(df)
-        critical_alerts = len(df[df['severity'] == 'HIGH']) if not df.empty else 0
-        unique_ips = df['src_ip'].nunique() if not df.empty else 0
 
         threat_level = "NGUY HIỂM" if critical_alerts > 0 else ("CẢNH BÁO" if total_alerts > 0 else "BÌNH THƯỜNG")
         threat_html = f'<span class="status-badge-red">{threat_level}</span>' if threat_level != "BÌNH THƯỜNG" else '<span class="status-badge-green">BÌNH THƯỜNG</span>'
@@ -106,7 +145,7 @@ if menu_selection == "Bảng Điều Khiển":
                 <div class="top-bar">
                     <div> <b>Tình trạng hệ thống:</b> <span class="status-badge-green">HOẠT ĐỘNG TỐT</span> &nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp; 
                      <b>Mức độ đe dọa:</b> {threat_html}</div>
-                    <div> Toàn thời gian &nbsp;&nbsp;|&nbsp;&nbsp; 👤 Quản trị viên SOC</div>
+                    <div>📦 DB: {db_size_kb:,.1f} KB ({total_alerts:,}/{MAX_DB_RECORDS:,} dòng) &nbsp;&nbsp;|&nbsp;&nbsp; 👤 Quản trị viên SOC</div>
                 </div>
             """, unsafe_allow_html=True)
 
@@ -154,9 +193,9 @@ elif menu_selection == "Cảnh Báo":
     # TRANG 2: BỘ LỌC CẢNH BÁO (Smart Filters)
     # ------------------------------------------------
     st.markdown("###  Trung Tâm Quản Lý Cảnh Báo (Alerts Center)")
-    st.markdown("Sử dụng bộ lọc để truy vết các sự cố mạng.")
+    st.markdown(f"Sử dụng bộ lọc để truy vết các sự cố mạng (Hiển thị tối đa {MAX_DISPLAY_ROWS:,} bản ghi mới nhất).")
 
-    df = load_data()
+    df = load_data(limit=MAX_DISPLAY_ROWS)
 
     if df.empty:
         st.success("Hệ thống chưa ghi nhận cuộc tấn công nào.")
