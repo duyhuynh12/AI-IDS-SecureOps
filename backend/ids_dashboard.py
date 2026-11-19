@@ -100,6 +100,19 @@ def highlight_severity(val):
     return f'color: {color}; font-weight: bold'
 
 
+def df_to_markdown(df):
+    if df.empty:
+        return "_Không có dữ liệu_"
+    headers = [str(col) for col in df.columns]
+    header_line = "| " + " | ".join(headers) + " |"
+    sep_line = "| " + " | ".join(["---"] * len(headers)) + " |"
+    rows = [
+        "| " + " | ".join(str(val) for val in row) + " |"
+        for row in df.to_numpy()
+    ]
+    return "\n".join([header_line, sep_line] + rows)
+
+
 # ==========================================
 # 3. XÂY DỰNG SIDEBAR
 # ==========================================
@@ -409,8 +422,16 @@ elif menu_selection == "Báo Cáo":
             csv_bytes = export_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
             json_bytes = export_df.to_json(orient='records', force_ascii=False, date_format='iso', indent=2).encode('utf-8')
 
-            # Tạo nội dung báo cáo Markdown tóm tắt cho đồ án
-            md_report = f"""#  BÁO CÁO SỰ CỐ AN NINH MẠNG (AI-IDS SOC REPORT)
+            top5_df = (
+                report_df['src_ip']
+                .value_counts()
+                .head(5)
+                .reset_index()
+            )
+            top5_df.columns = ['IP Kẻ Tấn Công', 'Số Gói Tấn Công']
+
+            # Tạo nội dung báo cáo Markdown tóm tắt cho đồ án (không phụ thuộc thư viện tabulate)
+            md_report = f"""# BÁO CÁO SỰ CỐ AN NINH MẠNG (AI-IDS SOC REPORT)
 - **Thời gian trích xuất:** {datetime.now().strftime('%H:%M:%S - %d/%m/%Y')}
 - **Tổng số cảnh báo ghi nhận:** {len(report_df):,} gói tin
 - **Số cảnh báo mức độ CAO (Khuếch đại):** {len(report_df[report_df['severity'] == 'HIGH']):,} gói tin
@@ -418,10 +439,10 @@ elif menu_selection == "Báo Cáo":
 - **Mô hình AI phân tích:** Random Forest Multi-Class (`RF_IDS_Multi.pkl`)
 
 ## 1. Thống kê theo loại hình tấn công
-{summary_df.to_markdown(index=False) if hasattr(summary_df, 'to_markdown') else summary_df.to_string(index=False)}
+{df_to_markdown(summary_df)}
 
 ## 2. Top 5 IP tấn công nguy hiểm nhất
-{report_df['src_ip'].value_counts().head(5).to_frame(name='Số gói tấn công').to_string()}
+{df_to_markdown(top5_df)}
 """
 
             btn_col1, btn_col2, btn_col3 = st.columns(3)
