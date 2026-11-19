@@ -5,6 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import time
 import os
+from datetime import datetime
 from streamlit_option_menu import option_menu
 
 # ==========================================
@@ -94,6 +95,11 @@ def clear_all_logs():
         return False
 
 
+def highlight_severity(val):
+    color = '#ff4b4b' if val in ['CAO', 'HIGH'] else '#fecb52'
+    return f'color: {color}; font-weight: bold'
+
+
 # ==========================================
 # 3. XÂY DỰNG SIDEBAR
 # ==========================================
@@ -103,8 +109,8 @@ with st.sidebar:
 
     menu_selection = option_menu(
         menu_title="DANH MỤC",
-        options=["Bảng Điều Khiển", "Cảnh Báo"],
-        icons=["speedometer2", "exclamation-triangle"],
+        options=["Bảng Điều Khiển", "Cảnh Báo", "Điều Tra", "Báo Cáo"],
+        icons=["speedometer2", "exclamation-triangle", "search", "file-earmark-arrow-down"],
         menu_icon="cast",
         default_index=0,
         styles=MENU_STYLES
@@ -190,7 +196,7 @@ elif menu_selection == "Cảnh Báo":
     # ------------------------------------------------
     # TRANG 2: BỘ LỌC CẢNH BÁO (Smart Filters)
     # ------------------------------------------------
-    st.markdown("###  Trung Tâm Quản Lý Cảnh Báo (Alerts Center)")
+    st.markdown("### 🚨 Trung Tâm Quản Lý Cảnh Báo (Alerts Center)")
     st.markdown(f"Sử dụng bộ lọc để truy vết các sự cố mạng (Hiển thị tối đa {MAX_DISPLAY_ROWS:,} bản ghi mới nhất).")
 
     df = load_data(limit=MAX_DISPLAY_ROWS)
@@ -198,10 +204,8 @@ elif menu_selection == "Cảnh Báo":
     if df.empty:
         st.success("Hệ thống chưa ghi nhận cuộc tấn công nào.")
     else:
-        # Chuyển đổi ngôn ngữ hiển thị
         df['severity'] = df['severity'].replace({'HIGH': 'CAO', 'MEDIUM': 'TRUNG BÌNH'})
 
-        # Hàng công cụ Lọc
         col_filter1, col_filter2, col_filter3 = st.columns(3)
         with col_filter1:
             sev_filter = st.multiselect("Lọc mức độ:", ["CAO", "TRUNG BÌNH"], default=["CAO", "TRUNG BÌNH"])
@@ -209,29 +213,239 @@ elif menu_selection == "Cảnh Báo":
             ip_list = ["Tất cả"] + list(df['src_ip'].unique())
             ip_filter = st.selectbox("Truy vết IP Nguồn:", ip_list)
         with col_filter3:
-            if st.button(" Làm mới dữ liệu", use_container_width=True):
+            if st.button("🔄 Làm mới dữ liệu", use_container_width=True):
                 st.rerun()
 
-        # Áp dụng Logic Lọc
         filtered_df = df[df['severity'].isin(sev_filter)]
         if ip_filter != "Tất cả":
             filtered_df = filtered_df[filtered_df['src_ip'] == ip_filter]
 
-        st.markdown(f"**Kết quả:** Tìm thấy {len(filtered_df)} bản ghi phù hợp.")
+        st.markdown(f"**Kết quả:** Tìm thấy {len(filtered_df):,} bản ghi phù hợp.")
 
-        # Hiển thị bảng
-        filtered_df.rename(
+        filtered_df = filtered_df.rename(
             columns={'id': 'ID', 'timestamp': 'Thời gian', 'src_ip': 'IP Kẻ Tấn Công', 'dst_ip': 'IP Mục Tiêu',
-                     'attack_type': 'Loại Tấn Công', 'severity': 'Mức Độ'}, inplace=True)
-
-
-        def highlight_row(val):
-            color = '#ff4b4b' if val == 'CAO' else '#fecb52'
-            return f'color: {color}; font-weight: bold'
-
+                     'attack_type': 'Loại Tấn Công', 'severity': 'Mức Độ'}
+        )
 
         try:
-            st.dataframe(filtered_df.style.map(highlight_row, subset=['Mức Độ']), use_container_width=True, height=500)
+            st.dataframe(filtered_df.style.map(highlight_severity, subset=['Mức Độ']), use_container_width=True, height=500)
         except AttributeError:
-            st.dataframe(filtered_df.style.applymap(highlight_row, subset=['Mức Độ']), use_container_width=True,
+            st.dataframe(filtered_df.style.applymap(highlight_severity, subset=['Mức Độ']), use_container_width=True,
                          height=500)
+
+elif menu_selection == "Điều Tra":
+    # ------------------------------------------------
+    # TRANG 3: ĐIỀU TRA & TRUY VẾT KẺ TẤN CÔNG (THREAT HUNTING)
+    # ------------------------------------------------
+    st.markdown("### 🔍 Trung Tâm Điều Tra & Truy Vết IP (Threat Hunting)")
+    st.markdown("Phân tích hành vi, xếp hạng các nguồn phát tán DDoS và lập hồ sơ chi tiết từng IP tấn công.")
+
+    df = load_data(limit=MAX_DB_RECORDS)
+
+    if df.empty:
+        st.info("Chưa có dữ liệu tấn công để thực hiện điều tra. Hãy chạy `attacker.py` để tạo lưu lượng.")
+    else:
+        df['severity_vi'] = df['severity'].replace({'HIGH': 'CAO', 'MEDIUM': 'TRUNG BÌNH'})
+
+        # Phần 1: Biểu đồ Top 10 IP Tấn công & Tương quan Vũ khí
+        col_hunt1, col_hunt2 = st.columns([1, 1])
+
+        with col_hunt1:
+            st.markdown("#### 🏆 Top 10 IP Tấn Công Mạnh Nhất")
+            top_ips = (
+                df.groupby('src_ip')
+                .size()
+                .reset_index(name='packet_count')
+                .sort_values('packet_count', ascending=True)
+                .tail(10)
+            )
+            fig_top = px.bar(
+                top_ips,
+                x='packet_count',
+                y='src_ip',
+                orientation='h',
+                text='packet_count',
+                template="plotly_dark",
+                color='packet_count',
+                color_continuous_scale=['#fecb52', '#ff4b4b']
+            )
+            fig_top.update_layout(
+                height=340,
+                margin=dict(l=0, r=10, t=10, b=0),
+                xaxis_title="Số gói tấn công",
+                yaxis_title="IP Nguồn",
+                coloraxis_showscale=False
+            )
+            st.plotly_chart(fig_top, use_container_width=True)
+
+        with col_hunt2:
+            st.markdown("#### ⚔️ Phân Bố Vũ Khí Theo Mức Độ Đe Dọa")
+            weapon_stats = (
+                df.groupby(['attack_type', 'severity_vi'])
+                .size()
+                .reset_index(name='count')
+            )
+            fig_weapon = px.bar(
+                weapon_stats,
+                x='attack_type',
+                y='count',
+                color='severity_vi',
+                text='count',
+                barmode='group',
+                template="plotly_dark",
+                color_discrete_map={'CAO': '#ff4b4b', 'TRUNG BÌNH': '#fecb52'}
+            )
+            fig_weapon.update_layout(
+                height=340,
+                margin=dict(l=0, r=0, t=10, b=0),
+                xaxis_title="Loại Vũ Khí",
+                yaxis_title="Số lượng gói",
+                legend_title="Mức độ"
+            )
+            st.plotly_chart(fig_weapon, use_container_width=True)
+
+        st.markdown("---")
+        st.markdown("#### 🕵️ Hồ Sơ Truy Vết Chi Tiết Từng IP (IP Forensics Profile)")
+
+        ip_ranking = df['src_ip'].value_counts().index.tolist()
+        selected_ip = st.selectbox(
+            "🎯 Chọn IP Kẻ Tấn Công cần điều tra chuyên sâu (Sắp xếp theo mức độ nguy hiểm):",
+            ip_ranking
+        )
+
+        ip_df = df[df['src_ip'] == selected_ip].copy()
+        ip_total = len(ip_df)
+        ip_high = len(ip_df[ip_df['severity'] == 'HIGH'])
+        ip_top_weapon = ip_df['attack_type'].mode()[0] if not ip_df.empty else "N/A"
+        ip_first_seen = ip_df['timestamp'].min().strftime('%H:%M:%S - %d/%m/%Y')
+        ip_last_seen = ip_df['timestamp'].max().strftime('%H:%M:%S - %d/%m/%Y')
+        ip_threat_badge = "CAO (NGUY HIỂM)" if ip_high > 0 else "TRUNG BÌNH"
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Tổng Gói Tấn Công", f"{ip_total:,} gói", f"Chiếm {(ip_total / len(df) * 100):.1f}% tổng log")
+        m2.metric("Mức Đe Dọa Của IP", ip_threat_badge, f"{ip_high:,} gói khuếch đại")
+        m3.metric("Vũ Khí Chủ Lực", ip_top_weapon, f"{ip_df['attack_type'].nunique()} loại vũ khí đã dùng")
+        m4.metric("Hoạt Động Gần Nhất", ip_last_seen.split(' - ')[0], f"Từ {ip_first_seen.split(' - ')[0]}")
+
+        st.markdown(f"**📋 Nhật ký gói tin tấn công từ IP `{selected_ip}`:**")
+        ip_display = ip_df[['id', 'timestamp', 'src_ip', 'dst_ip', 'attack_type', 'severity_vi']].rename(
+            columns={'id': 'ID', 'timestamp': 'Thời gian', 'src_ip': 'IP Kẻ Tấn Công',
+                     'dst_ip': 'IP Mục Tiêu', 'attack_type': 'Loại Tấn Công', 'severity_vi': 'Mức Độ'}
+        )
+        try:
+            st.dataframe(ip_display.style.map(highlight_severity, subset=['Mức Độ']), use_container_width=True, height=300)
+        except AttributeError:
+            st.dataframe(ip_display.style.applymap(highlight_severity, subset=['Mức Độ']), use_container_width=True, height=300)
+
+elif menu_selection == "Báo Cáo":
+    # ------------------------------------------------
+    # TRANG 4: BÁO CÁO & XUẤT DỮ LIỆU SOC (INCIDENT REPORTING)
+    # ------------------------------------------------
+    st.markdown("### 📄 Trung Tâm Báo Cáo & Xuất Dữ Liệu SOC (SOC Reporting)")
+    st.markdown("Tổng hợp số liệu thống kê sự cố an ninh mạng và trích xuất báo cáo (CSV / JSON / Markdown).")
+
+    df = load_data(limit=MAX_DB_RECORDS)
+
+    if df.empty:
+        st.info("Chưa có dữ liệu sự cố để tạo báo cáo.")
+    else:
+        df['severity_vi'] = df['severity'].replace({'HIGH': 'CAO', 'MEDIUM': 'TRUNG BÌNH'})
+
+        # Bộ lọc dữ liệu cần xuất báo cáo
+        col_r1, col_r2 = st.columns(2)
+        all_attacks = list(df['attack_type'].unique())
+        with col_r1:
+            selected_attacks = st.multiselect("Chọn loại tấn công đưa vào báo cáo:", all_attacks, default=all_attacks)
+        with col_r2:
+            selected_sevs = st.multiselect("Chọn mức độ cảnh báo:", ["CAO", "TRUNG BÌNH"], default=["CAO", "TRUNG BÌNH"])
+
+        report_df = df[df['attack_type'].isin(selected_attacks) & df['severity_vi'].isin(selected_sevs)].copy()
+
+        st.markdown("#### 📊 Bảng Tổng Hợp Thống Kê Theo Loại Tấn Công")
+        if report_df.empty:
+            st.warning("Không có bản ghi nào khớp với điều kiện lọc hiện tại.")
+        else:
+            summary_df = (
+                report_df.groupby(['attack_type', 'severity_vi'])
+                .agg(
+                    total_packets=('id', 'count'),
+                    unique_attackers=('src_ip', 'nunique'),
+                    first_seen=('timestamp', 'min'),
+                    last_seen=('timestamp', 'max')
+                )
+                .reset_index()
+                .sort_values('total_packets', ascending=False)
+            )
+            summary_df['ratio'] = (summary_df['total_packets'] / len(report_df) * 100).round(2).astype(str) + '%'
+            summary_df.rename(
+                columns={
+                    'attack_type': 'Loại Tấn Công',
+                    'severity_vi': 'Mức Độ',
+                    'total_packets': 'Tổng Số Gói',
+                    'unique_attackers': 'Số IP Nguồn',
+                    'ratio': 'Tỷ Lệ (%)',
+                    'first_seen': 'Phát Hiện Đầu Tiên',
+                    'last_seen': 'Ghi Nhận Cuối Cùng'
+                },
+                inplace=True
+            )
+            st.dataframe(summary_df, use_container_width=True, hide_index=True)
+
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown("#### 📥 Trích Xuất Hồ Sơ Sự Cố (Export Files)")
+
+            export_df = report_df[['id', 'timestamp', 'src_ip', 'dst_ip', 'attack_type', 'severity_vi']].rename(
+                columns={
+                    'id': 'ID',
+                    'timestamp': 'Thoi_Gian',
+                    'src_ip': 'IP_Ke_Tan_Cong',
+                    'dst_ip': 'IP_Muc_Tieu',
+                    'attack_type': 'Loai_Tan_Cong',
+                    'severity_vi': 'Muc_Do'
+                }
+            )
+
+            now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+            csv_bytes = export_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+            json_bytes = export_df.to_json(orient='records', force_ascii=False, date_format='iso', indent=2).encode('utf-8')
+
+            # Tạo nội dung báo cáo Markdown tóm tắt cho đồ án
+            md_report = f"""# 🛡️ BÁO CÁO SỰ CỐ AN NINH MẠNG (AI-IDS SOC REPORT)
+- **Thời gian trích xuất:** {datetime.now().strftime('%H:%M:%S - %d/%m/%Y')}
+- **Tổng số cảnh báo ghi nhận:** {len(report_df):,} gói tin
+- **Số cảnh báo mức độ CAO (Khuếch đại):** {len(report_df[report_df['severity'] == 'HIGH']):,} gói tin
+- **Tổng số IP Kẻ tấn công (Unique Source IPs):** {report_df['src_ip'].nunique():,} IP
+- **Mô hình AI phân tích:** Random Forest Multi-Class (`RF_IDS_Multi.pkl`)
+
+## 1. Thống kê theo loại hình tấn công
+{summary_df.to_markdown(index=False) if hasattr(summary_df, 'to_markdown') else summary_df.to_string(index=False)}
+
+## 2. Top 5 IP tấn công nguy hiểm nhất
+{report_df['src_ip'].value_counts().head(5).to_frame(name='Số gói tấn công').to_string()}
+"""
+
+            btn_col1, btn_col2, btn_col3 = st.columns(3)
+            with btn_col1:
+                st.download_button(
+                    label="📥 Tải Báo Cáo Excel / CSV (.csv)",
+                    data=csv_bytes,
+                    file_name=f"SOC_IDS_Report_{now_str}.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+            with btn_col2:
+                st.download_button(
+                    label="📥 Tải Dữ Liệu SIEM (.json)",
+                    data=json_bytes,
+                    file_name=f"SOC_IDS_Logs_{now_str}.json",
+                    mime="application/json",
+                    use_container_width=True
+                )
+            with btn_col3:
+                st.download_button(
+                    label="📥 Tải Báo Cáo Tóm Tắt (.md)",
+                    data=md_report.encode('utf-8'),
+                    file_name=f"SOC_Summary_Report_{now_str}.md",
+                    mime="text/markdown",
+                    use_container_width=True
+                )
